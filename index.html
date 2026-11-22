@@ -880,7 +880,7 @@
   var video = $('#video');
 
   function recvReset() {
-    R.dec.reset(); R.done = false; R.start = 0; R.rateEma = 0; R.lastRank = 0; R.lastT = 0;
+    R.dec.reset(); R.done = false; R.start = 0; R.rateEma = 0; R.lastRank = 0; R.lastT = 0; R.progKnown = 0; R.progT = 0; R.progDup = 0;
     if (R.url) { URL.revokeObjectURL(R.url); R.url = null; }
     $('#recvBar').classList.remove('done'); $('#recvBar i').style.width = '0';
     $('#result').classList.add('hidden');
@@ -897,7 +897,7 @@
     var st = R.dec.push(bytes);
     if (st === 'ignored') return;
     var now = performance.now();
-    if (st === 'new-session') { R.start = now; R.rateEma = 0; R.lastRank = 0; R.lastT = now; }
+    if (st === 'new-session') { R.start = now; R.rateEma = 0; R.lastRank = 0; R.lastT = now; R.progKnown = 0; R.progT = now; R.progDup = 0; }
     var f = $('#flash'); f.classList.add('hit'); setTimeout(function () { f.classList.remove('hit'); }, 90);
     recvUpdate();
     if (st === 'complete') recvFinish();
@@ -912,16 +912,23 @@
       R.rateEma = R.rateEma ? R.rateEma * 0.6 + rate * 0.4 : rate;
       R.lastRank = s.known; R.lastT = now;
     }
+    // 진행이 멈췄는지: 새 정보 없이 같은 QR만 계속 읽히는 경우 (송신 화면이 멈춰 있음)
+    if (s.known > (R.progKnown || 0) || !R.progT) { R.progKnown = s.known; R.progT = now; R.progDup = s.duplicates; }
+    R.stuck = now - R.progT > 4000 && s.duplicates - R.progDup > 40;
+    var remain = R.rateEma > 0.05 ? (s.N - s.known) / R.rateEma : Infinity;
     $('#recvBar i').style.width = (100 * s.known / s.N).toFixed(1) + '%';
     stats($('#recvStats'), [
       ['복원 진행', s.known.toLocaleString() + ' / ' + s.N.toLocaleString() + ' (' + Math.floor(100 * s.known / s.N) + '%)'],
       ['받은 QR', s.unique.toLocaleString() + (s.duplicates ? ' (+중복 ' + s.duplicates + ')' : '')],
       ['해독 속도', R.fps.toFixed(0) + '프레임/초 · QR ' + (R.qrps || 0).toFixed(0) + '개/초'],
       ['경과', fmtSec((now - R.start) / 1000)],
-      ['남은 시간(추정)', R.rateEma > 0 ? fmtSec((s.N - s.known) / R.rateEma) : '계산 중'],
+      ['남은 시간(추정)', R.stuck ? '멈춤' : remain < 3600 ? fmtSec(remain) : '계산 중'],
       ['전송 크기', fmtBytes(s.L) + (s.compressed ? ' · 압축' : '')]
     ]);
-    if (!R.done) msg($('#recvMsg'), 'info', '수신 중… 순서나 빠진 장면은 신경 쓰지 않아도 됩니다.');
+    if (!R.done) {
+      if (R.stuck) msg($('#recvMsg'), 'warn', '⚠️ 같은 QR만 반복해서 읽히고 있어요. 보내는 쪽에서 <b>▶ 재생</b>을 눌렀는지, 화면이 멈추지 않았는지(다른 탭으로 넘어가면 멈춰요) 확인하세요.');
+      else msg($('#recvMsg'), 'info', '수신 중… 순서나 빠진 장면은 신경 쓰지 않아도 됩니다.');
+    }
   }
 
   async function recvFinish() {
@@ -1014,7 +1021,9 @@
     }
     URL.revokeObjectURL(url);
     msg($('#vidMsg'), R.done ? 'ok' : 'warn', R.done ? '동영상에서 복원했습니다.'
-      : '동영상만으로는 부족합니다 (' + ((R.dec.stats() || {}).known || 0) + ' / ' + ((R.dec.stats() || {}).N || '?') + '). 더 길게 찍은 동영상을 추가로 선택하면 이어서 복원됩니다.');
+      : (R.stuck ? '동영상에 같은 화면만 찍혀 있어요. 보내는 쪽에서 <b>▶ 재생</b>을 누른 상태로 다시 촬영하세요. '
+                 : '동영상만으로는 부족합니다 (' + ((R.dec.stats() || {}).known || 0) + ' / ' + ((R.dec.stats() || {}).N || '?') + '). ') +
+        '더 길게 찍은 동영상을 추가로 선택하면 이어서 복원됩니다.');
   }
   function playThrough(v, rate) {
     return new Promise(function (resolve) {
